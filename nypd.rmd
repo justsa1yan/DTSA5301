@@ -1,0 +1,220 @@
+---
+title: "NYPD Incidents: race by race"
+author: "anonymous"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+## Libraries used 
+library(readr) 
+library(dplyr)
+library(lubridate)
+library(ggmap)
+library(ggplot2)
+library(RColorBrewer)
+library(stats)
+
+
+## read in dataset
+#loading in pop for global
+url_pop = 'https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD'
+base_nypd_data = read_csv(url_pop)
+
+#understand how much data is missing 
+missing_counts <- base_nypd_data %>%  summarise(across(everything(), ~sum(is.na(.))))
+
+knitr::kable(head(missing_counts))
+
+#we have 59 records with missing geo data, remove
+nypd_data <- base_nypd_data %>%
+  filter(!is.na(Longitude))
+
+# Convert 'Latitude' and 'Longitude' to numeric if they are factors or characters
+nypd_data$Latitude <- as.numeric(as.character(nypd_data$Latitude))
+nypd_data$Longitude <- as.numeric(as.character(nypd_data$Longitude))
+
+# Filter out rows where perpetrator race is NA or 'UNKNOWN'
+nypd_data_filtered <- nypd_data %>%
+  filter(!is.na(PERP_RACE) & PERP_RACE != 'UNKNOWN')
+
+# Registering the API key for Google Maps (replace 'your_api_key' with your actual API key)
+register_google(key = "AIzaSyC6Jw4MwQoFPEcZNruGhgrIOPeboczR4uo")
+
+# Get the map
+new_york_map <- get_map(location = 'New York', zoom = 10)
+
+
+
+
+# Creating a heatmap of incidents by perpetrator race vs. victim race
+race_data <- nypd_data %>%
+  mutate(PERP_RACE = ifelse(PERP_RACE %in% c("WHITE HISPANIC", "BLACK HISPANIC"), "HISPANIC - MERGED", PERP_RACE),
+         VIC_RACE = ifelse(VIC_RACE %in% c("WHITE HISPANIC", "BLACK HISPANIC"), "HISPANIC - MERGED", VIC_RACE)) %>%
+  filter(PERP_RACE != "(null)", PERP_RACE != "", PERP_RACE != "NA", !is.na(PERP_RACE),
+         VIC_RACE != "(null)", VIC_RACE != "", VIC_RACE != "NA", !is.na(VIC_RACE)) %>%
+  count(PERP_RACE, VIC_RACE)
+```
+
+
+## Data Transformations
+
+- **Removed missing longitude/latitude data** (59 rows).
+- **Removed missing race data** (9,300 records). _Note: Acknowledge this may be biasing the overall location data as missing race can have correlation with a number of factors._
+- **Consolidated 'Hispanic White' and 'Hispanic Black' into 'Hispanic'.**
+
+## Analysis
+
+## First Figure
+
+- **The first figure takes a broad look into perpetrator vs. victim race to see how incidents map across races.**
+- **Incident heatmap is centered around black and hispanic perpetrators with black / hispanic victims**
+- **While black on black violence is the highest count, other categories of same race-on-race do not suggest that race-on-race crime is dominant.** 
+
+```{r race_by_race_heatmap, echo=FALSE, fig.cap="Heatmap: Race-on-Race"}
+ggplot(race_data, aes(x = PERP_RACE, y = VIC_RACE, fill = n)) +
+  geom_tile(color = "white") +  # Add white lines to distinguish the tiles
+  geom_text(aes(label = n), color = "black", size = 3) +  # Add incident count labels
+  scale_fill_gradient(low = "blue", high = "red", name = "Incident Count") +
+  labs(title = "Heatmap of Race-on-Race Violence Incidents",
+       x = "Perpetrator Race",
+       y = "Victim Race") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x axis labels for better readability
+```
+
+
+## Figures 2-4
+
+- **let's see if geography and victim are related**
+- **For black perpetrators, it seems there's a heavier concentration in the south-east. Note: most unknown victim race crimes occur in the middle-south section**
+- **For hispanic perpetrators, events occur in the mid-east. Uknown victim race crimes seem to be concentratedi n the north-east area.**
+- **For white perpretrators, crime seems to be more spread out by victim race. It may be due to population density in specific areas.**
+- **It appears that race and location have some correlation, let's test this later using Chi-Sq. independence** 
+
+
+```{r viz2 cleanup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+## zoom in on perp heatmap
+
+black_perpetrator_data <- nypd_data %>%
+  mutate(PERP_RACE = ifelse(PERP_RACE %in% c("WHITE HISPANIC", "BLACK HISPANIC"), "HISPANIC - MERGED", PERP_RACE),
+         VIC_RACE = ifelse(VIC_RACE %in% c("WHITE HISPANIC", "BLACK HISPANIC"), "HISPANIC - MERGED", VIC_RACE)) %>%
+  filter(PERP_RACE == "BLACK", !is.na(Longitude), !is.na(Latitude))  # Ensure location data is available
+
+# Assuming that Latitude and Longitude need to be numeric
+black_perpetrator_data$Latitude <- as.numeric(black_perpetrator_data$Latitude)
+black_perpetrator_data$Longitude <- as.numeric(black_perpetrator_data$Longitude)
+
+# Fetch a map of New York City
+new_york_map <- get_map(location = 'New York City', zoom = 12)
+```
+
+
+
+```{r geomap, echo=FALSE, fig.cap="Heatmap: Geographic Distribution of Black perpetrated crimes vs. victim race"}
+# Plotting the heatmap
+ggmap(new_york_map) +
+  geom_density2d(data = black_perpetrator_data, aes(x = Longitude, y = Latitude), size = 0.3) +
+  stat_density2d(data = black_perpetrator_data, aes(x = Longitude, y = Latitude, fill = ..level.., alpha = ..level..),
+                 geom = "polygon", color = NA) +
+  scale_fill_gradient(low = "green", high = "red") +
+  scale_alpha(range = c(0, 0.75), guide = FALSE) +
+  facet_wrap(~VIC_RACE) +  # Create a separate map for each victim race
+  labs(title = "Geographical Distribution of Black Perpetrator Incidents by Victim Race",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
+```
+
+
+
+```{r viz2-cleanup-hispanic, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Consolidate Hispanic race categories and focus on Hispanic perpetrators
+hispanic_perpetrator_data <- nypd_data %>%
+  mutate(PERP_RACE = ifelse(PERP_RACE %in% c("WHITE HISPANIC", "BLACK HISPANIC"), "HISPANIC - MERGED", PERP_RACE),
+         VIC_RACE = ifelse(VIC_RACE %in% c("WHITE HISPANIC", "BLACK HISPANIC"), "HISPANIC - MERGED", VIC_RACE)) %>%
+  filter(PERP_RACE == "HISPANIC - MERGED", !is.na(Longitude), !is.na(Latitude))  # Ensure location data is available
+
+# Ensure that Latitude and Longitude are numeric
+hispanic_perpetrator_data$Latitude <- as.numeric(hispanic_perpetrator_data$Latitude)
+hispanic_perpetrator_data$Longitude <- as.numeric(hispanic_perpetrator_data$Longitude)
+
+# Fetch a map of New York City
+new_york_map <- get_map(location = 'New York City', zoom = 12)
+
+
+
+### Visualization: Heatmap for Geographic Distribution of Hispanic Perpetrated Crimes
+
+```{r geomap-hispanic, echo=FALSE, fig.cap="Heatmap: Geographic Distribution of Hispanic Perpetrated Crimes vs. Victim Race"}
+# Plotting the heatmap for Hispanic perpetrators
+ggmap(new_york_map) +
+  geom_density2d(data = hispanic_perpetrator_data, aes(x = Longitude, y = Latitude), size = 0.3) +
+  stat_density2d(data = hispanic_perpetrator_data, aes(x = Longitude, y = Latitude, fill = ..level.., alpha = ..level..),
+                 geom = "polygon", color = NA) +
+  scale_fill_gradient(low = "green", high = "red") +
+  scale_alpha(range = c(0, 0.75), guide = FALSE) +
+  facet_wrap(~VIC_RACE) +  # Create a separate map for each victim race
+  labs(title = "Geographical Distribution of Hispanic Perpetrator Incidents by Victim Race",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
+```
+
+
+
+
+```{r viz2-cleanup-white, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Focus on White perpetrators
+white_perpetrator_data <- nypd_data %>%
+  filter(PERP_RACE == "WHITE", !is.na(Longitude), !is.na(Latitude))  # Ensure location data is available
+
+# Ensure that Latitude and Longitude are numeric
+white_perpetrator_data$Latitude <- as.numeric(white_perpetrator_data$Latitude)
+white_perpetrator_data$Longitude <- as.numeric(white_perpetrator_data$Longitude)
+
+# Fetch a map of New York City
+new_york_map <- get_map(location = 'New York City', zoom = 12)
+```
+
+  
+
+### Visualization: Heatmap for Geographic Distribution of White Perpetrated Crimes
+
+```{r geomap-white, echo=FALSE, fig.cap="Heatmap: Geographic Distribution of White Perpetrated Crimes vs. Victim Race"}
+# Plotting the heatmap for White perpetrators
+ggmap(new_york_map) +
+  geom_density2d(data = white_perpetrator_data, aes(x = Longitude, y = Latitude), size = 0.3) +
+  stat_density2d(data = white_perpetrator_data, aes(x = Longitude, y = Latitude, fill = ..level.., alpha = ..level..),
+                 geom = "polygon", color = NA) +
+  scale_fill_gradient(low = "green", high = "red") +
+  scale_alpha(range = c(0, 0.75), guide = FALSE) +
+  facet_wrap(~VIC_RACE) +  # Create a separate map for each victim race
+  labs(title = "Geographical Distribution of White Perpetrator Incidents by Victim Race",
+       x = "Longitude", y = "Latitude") +
+  theme_minimal()
+```  
+  
+## Modeling -  chi-squared ind. test: race vs. location 
+
+- **Given the heatmaps we've seen, let's try to understand if location has a high correlation with race of perpretrator**
+- **Using chi-squared test for independence, we find a strong correlation in the existing data**
+- **NOTE: data may be bias as we saw the unknowns are highly concentrated in one area**
+
+```{r MODEL-CHISQ, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+nypd_data_boro <- nypd_data %>%
+  filter(BORO != "UNKNOWN", !is.na(BORO), PERP_RACE != "UNKNOWN", !is.na(PERP_RACE))
+
+contingency_table <- table(nypd_data_boro$BORO, nypd_data_boro$PERP_RACE)
+chi_squared_result <- chisq.test(contingency_table)
+print(chi_squared_result)
+
+```
+
