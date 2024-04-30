@@ -41,8 +41,8 @@ nypd_data$Longitude <- as.numeric(as.character(nypd_data$Longitude))
 nypd_data_filtered <- nypd_data %>%
   filter(!is.na(PERP_RACE) & PERP_RACE != 'UNKNOWN')
 
-# Registering the API key for Google Maps (replace 'your_api_key' with your actual API key)
-register_google(key = "AIzaSyC6Jw4MwQoFPEcZNruGhgrIOPeboczR4uo")
+# Registering the API key for Google Maps - NOTE: this is a personal key and will be deprecated once the course ends.
+register_google(key = "AIzaSyC6Jw4MwQoFPEcZNruGhgrIOPeboczR4uo") # for grading purposes, this key should still be active and generate calls to google maps api 
 
 # Get the map
 new_york_map <- get_map(location = 'New York', zoom = 10)
